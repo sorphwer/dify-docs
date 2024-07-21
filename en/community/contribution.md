@@ -89,8 +89,6 @@ To validate your set up, head over to [http://localhost:3000](http://localhost:3
 
 If you are adding a model provider,[this guide](https://github.com/langgenius/dify/blob/main/api/core/model\_runtime/README.md) is for you.
 
-如果您要向Agent或Workflow添加工具提供程序，请参考此指南。
-
 If you are adding tools used in Agent Assistants and Workflows, [this guide](https://github.com/langgenius/dify/blob/main/api/core/tools/README.md) is for you.
 
 
