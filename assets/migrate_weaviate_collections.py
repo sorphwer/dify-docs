@@ -44,7 +44,6 @@ from typing import List, Dict, Any
 # WEAVIATE_ENDPOINT format:   http://<host>:<port>   (REST API endpoint)
 # WEAVIATE_GRPC_ENDPOINT format: grpc://<host>:<port>  (gRPC endpoint)
 # WEAVIATE_API_KEY: The API key configured in your Weaviate instance
-# BATCH_SIZE: Number of objects per batch during migration (default: 1000)
 # =============================================================================
 WEAVIATE_ENDPOINT = os.getenv("WEAVIATE_ENDPOINT", "http://weaviate:8080")
 WEAVIATE_GRPC_ENDPOINT = os.getenv("WEAVIATE_GRPC_ENDPOINT", "grpc://weaviate:50051")
