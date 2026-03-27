@@ -3,8 +3,8 @@ Migration script to fix Weaviate schema incompatibility between 1.19.0 and 1.27.
 This script:
 - Identifies collections with old schema (no vectorConfig)
 - Creates new collections with proper vectorConfig including "default" named vector
-- Migrates data using cursor-based pagination (efficient for large datasets)
-- Uses batch operations for fast inserts
+- Migrates data using Weaviate iterator (recommended for reading all objects)
+- Uses fixed-size batch operations for reliable inserts
 - Preserves all object properties and vectors
 Note:
 - This is a community-edited version of the draft of the script presented by the Dify Team.
@@ -260,60 +260,35 @@ def transform_property_values(properties: Dict[str, Any]) -> Dict[str, Any]:
 def migrate_collection_data(
     client: weaviate.WeaviateClient, old_collection_name: str, new_collection_name: str
 ) -> int:
-    """Migrate data from old collection to new collection using cursor-based pagination"""
+    """Migrate data from old collection to new collection using iterator + fixed-size batch"""
     old_collection = client.collections.get(old_collection_name)
     new_collection = client.collections.get(new_collection_name)
 
     total_migrated = 0
-    cursor = None
 
     print(f"Migrating data from {old_collection_name} to {new_collection_name}")
 
-    while True:
-        # Fetch batch of objects using cursor-based pagination
-        if cursor is None:
-            # First batch
-            response = old_collection.query.fetch_objects(
-                limit=BATCH_SIZE, include_vector=True
+    # Use fixed-size batch to avoid overwhelming the server during migration
+    with new_collection.batch.fixed_size(batch_size=BATCH_SIZE) as batch:
+        # Use iterator (recommended by Weaviate) instead of manual cursor pagination
+        for obj in old_collection.iterator(include_vector=True):
+            # Prepare and transform properties (uuid -> text conversion)
+            properties = transform_property_values(obj.properties)
+
+            # Add object with vector
+            batch.add_object(
+                properties=properties,
+                vector=(
+                    obj.vector["default"]
+                    if isinstance(obj.vector, dict)
+                    else obj.vector
+                ),
+                uuid=obj.uuid,
             )
-        else:
-            # Subsequent batches using cursor
-            response = old_collection.query.fetch_objects(
-                limit=BATCH_SIZE, include_vector=True, after=cursor
-            )
 
-        objects = response.objects
-
-        if not objects:
-            break
-
-        # Use batch insert for efficiency
-        with new_collection.batch.dynamic() as batch:
-            for obj in objects:
-                # Prepare and transform properties (uuid -> text conversion)
-                properties = transform_property_values(obj.properties)
-
-                # Add object with vector
-                batch.add_object(
-                    properties=properties,
-                    vector=(
-                        obj.vector["default"]
-                        if isinstance(obj.vector, dict)
-                        else obj.vector
-                    ),
-                    uuid=obj.uuid,
-                )
-
-        total_migrated += len(objects)
-        print(f"  Migrated {total_migrated} objects...")
-
-        # Update cursor for next iteration
-        if len(objects) < BATCH_SIZE:
-            # Last batch
-            break
-        else:
-            # Get the last object's UUID for cursor
-            cursor = objects[-1].uuid
+            total_migrated += 1
+            if total_migrated % BATCH_SIZE == 0:
+                print(f"  Migrated {total_migrated} objects...")
 
     print(f"  Total migrated: {total_migrated} objects")
     return total_migrated
@@ -408,40 +383,19 @@ def replace_old_collection(
     new_collection = client.collections.get(old_collection_name)
 
     total_copied = 0
-    cursor = None
 
     try:
-        while True:
-            # Fetch batch of objects using cursor-based pagination
-            if cursor is None:
-                response = migrated_collection.query.fetch_objects(
-                    include_vector=True, limit=BATCH_SIZE
-                )
-            else:
-                response = migrated_collection.query.fetch_objects(
-                    include_vector=True, limit=BATCH_SIZE, after=cursor
+        # Use fixed-size batch to avoid overwhelming the server during migration
+        with new_collection.batch.fixed_size(batch_size=BATCH_SIZE) as batch:
+            # Use iterator (recommended by Weaviate) instead of manual cursor pagination
+            for obj in migrated_collection.iterator(include_vector=True):
+                batch.add_object(
+                    properties=obj.properties, vector=obj.vector, uuid=obj.uuid
                 )
 
-            objects = response.objects
-
-            if not objects:
-                break
-
-            # Use batch insert for efficiency
-            with new_collection.batch.dynamic() as batch:
-                for obj in objects:
-                    batch.add_object(
-                        properties=obj.properties, vector=obj.vector, uuid=obj.uuid
-                    )
-
-            total_copied += len(objects)
-            print(f"    Copied {total_copied} objects...")
-
-            # Update cursor for next iteration
-            if len(objects) < BATCH_SIZE:
-                break
-            else:
-                cursor = objects[-1].uuid
+                total_copied += 1
+                if total_copied % BATCH_SIZE == 0:
+                    print(f"    Copied {total_copied} objects...")
     except Exception as e:
         print(f"    COPY INTERRUPTED after {total_copied} objects: {e}")
         print(f"    DATA IS SAFE in: {new_collection_name}")
